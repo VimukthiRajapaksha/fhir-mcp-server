@@ -30,7 +30,6 @@ from fhir_mcp_server.utils import (
 from fhir_mcp_server.oauth import (
     handle_failed_authentication,
     OAuthServerProvider,
-    OAuthToken,
     ServerConfigs,
 )
 from fhirpy import AsyncFHIRClient
@@ -55,22 +54,18 @@ server_provider: OAuthServerProvider = OAuthServerProvider(configs=configs)
 
 
 @click.pass_context
-async def get_user_access_token(click_ctx: click.Context) -> OAuthToken | None:
+async def get_user_access_token(click_ctx: click.Context) -> AccessToken | None:
     """
     Retrieve the access token for the authenticated user.
-    Returns an OAuthToken if available, otherwise raises an error.
+    Returns an AccessToken if available, otherwise raises an error.
     """
     if configs.server_access_token:
         logger.debug("Using configured FHIR access token for user.")
-        return OAuthToken(access_token=configs.server_access_token, token_type="Bearer")
+        return AccessToken(token=configs.server_access_token, client_id=configs.server_client_id, scopes=configs.scopes)
     
     user_token: AccessToken | None = get_access_token()
-    if not user_token:
-        logger.error("Failed to obtain client access token.")
-        raise ValueError("Failed to obtain client access token.")
-
-    logger.debug("Obtained client access token from context.")
-
+    logger.debug("Obtained user access token from context. %s", user_token)
+    
     # Return the FHIR access token
     return user_token
 
@@ -89,14 +84,14 @@ async def get_async_fhir_client(click_ctx: click.Context) -> AsyncFHIRClient:
     disable_auth: bool = (
         click_ctx.obj.get("disable_auth") if click_ctx.obj else False
     )
-    if not disable_auth:
-        user_token: AccessToken | None = await get_user_access_token()
-        if not user_token:
-            logger.error("User is not authenticated.")
-            raise ValueError("User is not authenticated.")
-        client_kwargs["access_token"] = user_token.token
+    user_token: AccessToken | None = await get_user_access_token()
+    if not disable_auth and not user_token:
+        logger.error("User is not authenticated.")
+        raise ValueError("User is not authenticated.")
     else:
         logger.debug("FHIR authentication is disabled.")
+    if user_token:
+        client_kwargs["access_token"] = user_token.token
     return await create_async_fhir_client(**client_kwargs)
 
 
